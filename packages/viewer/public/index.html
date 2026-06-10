@@ -7,19 +7,23 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
-    href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,400;1,9..144,600&family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;900&family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
     rel="stylesheet"
   />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <canvas id="stars" aria-hidden="true"></canvas>
   <header class="top">
     <a class="brand" href="#/">
-      <span class="brand-mark" aria-hidden="true"></span>
+      <svg width="26" height="18" viewBox="0 0 26 18" aria-hidden="true">
+        <path d="M2 9 C5 2, 9 2, 12 9 S 19 16, 24 9" fill="none" stroke="#D4B27A" stroke-width="1.8"/>
+        <path d="M2 9 C5 16, 9 16, 12 9 S 19 2, 24 9" fill="none" stroke="#E84852" stroke-width="1.8"/>
+      </svg>
       <span class="brand-name">iq-helix</span>
     </a>
     <nav>
-      <a href="#/" data-nav="subjects">subjects</a>
+      <a href="#/" data-nav="subjects">관측소</a>
       <a href="#/q" data-nav="questions">열린 질문</a>
     </nav>
   </header>

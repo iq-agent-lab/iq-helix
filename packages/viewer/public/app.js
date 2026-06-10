@@ -1,13 +1,19 @@
+import { mountHelix3D, startStarfield } from "/helix3d.js";
+
 const app = document.getElementById("app");
+const routes = { "": renderHome, q: renderQuestions, s: renderTimeline };
 
-const routes = { "": renderSubjects, q: renderQuestions, s: renderTimeline };
+let destroy3D = null;
+let heroIndex = 0;
 
+startStarfield();
 window.addEventListener("hashchange", route);
 route();
 
 async function route() {
+  if (destroy3D) { destroy3D(); destroy3D = null; }
   const [, page = "", id] = location.hash.split("/");
-  const handler = routes[page] ?? renderSubjects;
+  const handler = routes[page] ?? renderHome;
   for (const a of document.querySelectorAll("nav a")) {
     if (a.dataset.nav === (page === "q" ? "questions" : "subjects")) {
       a.setAttribute("aria-current", "page");
@@ -15,7 +21,7 @@ async function route() {
       a.removeAttribute("aria-current");
     }
   }
-  app.innerHTML = `<p class="page-sub">불러오는 중…</p>`;
+  app.innerHTML = `<p class="page-sub">관측 준비 중…</p>`;
   try {
     await handler(decodeURIComponent((id ?? "").split("?")[0]));
   } catch (err) {
@@ -23,50 +29,95 @@ async function route() {
   }
 }
 
-/* ---------- subjects 목록 ---------- */
+/* ---------- 관측소 (랜딩) ---------- */
 
-async function renderSubjects() {
+async function renderHome() {
   const subjects = await getJSON("/api/subjects");
   if (subjects.length === 0) {
     app.innerHTML = `
-      <h1 class="page-title">Subjects</h1>
-      <div class="empty">아직 subject가 없습니다.<br/>
+      <h1 class="page-title">관측소</h1>
+      <div class="empty">아직 나선이 없습니다.<br/>
       <code>helix import spiral-buddy &lt;vault-path&gt;</code> 로 기존 노트를 가져오세요.</div>`;
     return;
   }
   const openTotal = subjects.reduce((n, s) => n + s.openQuestionCount, 0);
+  heroIndex = ((heroIndex % subjects.length) + subjects.length) % subjects.length;
+
   app.innerHTML = `
-    <h1 class="page-title">Subjects</h1>
-    <p class="page-sub">${subjects.length}개의 나선 · 열린 질문 ${openTotal}개</p>
+    <div class="hero">
+      <span class="hero-hint">드래그 — 가로: 자전 · 세로: 관측 각도</span>
+      <div class="hero-canvas-slot"></div>
+      <div class="hero-meta">
+        <div>
+          <h2 class="hero-title"><a id="hero-link" href="#"></a></h2>
+          <div class="hero-stats" id="hero-stats"></div>
+        </div>
+        <div class="hero-nav">
+          <button id="hero-prev" aria-label="이전 나선">←</button>
+          <span class="pos" id="hero-pos"></span>
+          <button id="hero-next" aria-label="다음 나선">→</button>
+        </div>
+      </div>
+    </div>
+    <p class="orbit-caption"><span class="g">가닥 1 = layer</span> · <span class="r">가닥 2 = 질문</span> · 가로대 = 한 회전 · 점선 = 다음 회전</p>
+    <h2 class="sec-title">모든 나선 — ${subjects.length}개 · 열린 질문 ${openTotal}개</h2>
     <div class="subject-grid">
-      ${subjects
-        .map(
-          (s) => `
-        <a class="subject-card" href="#/s/${encodeURIComponent(s.id)}">
-          <div class="card-top">
-            <h2>${esc(displayTitle(s.title))}</h2>
-            ${glyphSVG(s.layerCount, s.openQuestionCount)}
-          </div>
-          <div class="subject-meta">
-            <span>layer ${s.layerCount}</span>
-            ${s.openQuestionCount ? `<span class="oq">열린 질문 ${s.openQuestionCount}</span>` : ""}
-            <span>${esc(s.lastTouched)}</span>
-          </div>
-          ${
-            s.tags.length
-              ? `<div class="subject-tags">${s.tags
-                  .slice(0, 4)
-                  .map((t) => `<span class="tag">${esc(t)}</span>`)
-                  .join("")}</div>`
-              : ""
-          }
-        </a>`,
-        )
-        .join("")}
+      ${subjects.map(subjectCard).join("")}
     </div>`;
+
+  const slot = document.querySelector(".hero-canvas-slot");
+  async function showHero() {
+    const summary = subjects[heroIndex];
+    const subject = await getJSON(`/api/subjects/${encodeURIComponent(summary.id)}`);
+    if (destroy3D) destroy3D();
+    destroy3D = mountHelix3D(slot, subject, {
+      height: 320,
+      onLayerClick: () => { location.hash = `#/s/${encodeURIComponent(summary.id)}`; },
+    });
+    const link = document.getElementById("hero-link");
+    link.textContent = displayTitle(summary.title);
+    link.href = `#/s/${encodeURIComponent(summary.id)}`;
+    document.getElementById("hero-stats").innerHTML = `
+      <span>layer ${summary.layerCount}</span>
+      ${summary.openQuestionCount ? `<span class="oq">열린 질문 ${summary.openQuestionCount}</span>` : ""}
+      <span>${esc(summary.lastTouched)}</span>`;
+    document.getElementById("hero-pos").textContent = `${heroIndex + 1}/${subjects.length}`;
+  }
+  document.getElementById("hero-prev").addEventListener("click", () => {
+    heroIndex = (heroIndex - 1 + subjects.length) % subjects.length;
+    showHero();
+  });
+  document.getElementById("hero-next").addEventListener("click", () => {
+    heroIndex = (heroIndex + 1) % subjects.length;
+    showHero();
+  });
+  await showHero();
 }
 
-/** 카드용 미니 이중나선 글리프: 회전 수 = layer 수, 꼬리의 점 = 열린 질문 */
+function subjectCard(s) {
+  return `
+    <a class="subject-card" href="#/s/${encodeURIComponent(s.id)}">
+      <div class="card-top">
+        <h2>${esc(displayTitle(s.title))}</h2>
+        ${glyphSVG(s.layerCount, s.openQuestionCount)}
+      </div>
+      <div class="subject-meta">
+        <span>layer ${s.layerCount}</span>
+        ${s.openQuestionCount ? `<span class="oq">열린 질문 ${s.openQuestionCount}</span>` : ""}
+        <span>${esc(s.lastTouched)}</span>
+      </div>
+      ${
+        s.tags.length
+          ? `<div class="subject-tags">${s.tags
+              .slice(0, 4)
+              .map((t) => `<span class="tag">${esc(t)}</span>`)
+              .join("")}</div>`
+          : ""
+      }
+    </a>`;
+}
+
+/** 카드용 미니 이중나선: 회전 수 = layer 수, 꼬리의 점 = 열린 질문 */
 function glyphSVG(layerCount, openCount) {
   const turns = Math.min(Math.max(layerCount, 1), 5);
   const pw = 15;
@@ -87,15 +138,15 @@ function glyphSVG(layerCount, openCount) {
   }
   let dotsSvg = "";
   for (let k = 0; k < dots; k++) {
-    dotsSvg += `<circle cx="${4 + turns * pw + 7 + k * 6}" cy="${cy}" r="2.4" fill="#cc785c"/>`;
+    dotsSvg += `<circle cx="${4 + turns * pw + 7 + k * 6}" cy="${cy}" r="2.2" fill="#E84852"/>`;
   }
   return `<svg class="glyph" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true">
-    <path d="${p1}" fill="none" stroke="#c9c2b4" stroke-width="1.6"/>
-    <path d="${p2}" fill="none" stroke="#cc785c" stroke-width="1.6" opacity="0.85"/>
+    <path d="${p1}" fill="none" stroke="#D4B27A" stroke-width="1.5" opacity="0.9"/>
+    <path d="${p2}" fill="none" stroke="#E84852" stroke-width="1.5" opacity="0.85"/>
     ${dotsSvg}</svg>`;
 }
 
-/* ---------- 나선 타임라인 (킬러 뷰) ---------- */
+/* ---------- subject 상세 ---------- */
 
 async function renderTimeline(id) {
   const s = await getJSON(`/api/subjects/${encodeURIComponent(id)}`);
@@ -107,17 +158,15 @@ async function renderTimeline(id) {
   const gutterW = 28 + laneCount * 18 + 16;
 
   app.innerHTML = `
-    <div class="timeline-head">
-      <h1 class="page-title">${esc(displayTitle(s.title))}</h1>
-      <p class="page-sub">${s.tags.map(esc).join(" · ") || "&nbsp;"}</p>
-      <div class="badges">
-        <span class="badge layers">layer ${s.layers.length}</span>
-        ${open.length ? `<span class="badge open">열린 질문 ${open.length}</span>` : ""}
-        ${solved.length ? `<span class="badge solved">해소 ${solved.length}</span>` : ""}
-      </div>
+    <h1 class="page-title">${esc(displayTitle(s.title))}</h1>
+    <p class="page-sub tags">${s.tags.map(esc).join(" · ") || "&nbsp;"}</p>
+    <div class="badges">
+      <span class="badge layers">layer ${s.layers.length}</span>
+      ${open.length ? `<span class="badge open">열린 질문 ${open.length}</span>` : ""}
+      ${solved.length ? `<span class="badge solved">해소 ${solved.length}</span>` : ""}
     </div>
-    <div class="orbit-wrap" id="orbit">${orbitSVG(s, open.length)}</div>
-    <p class="orbit-caption">옆에서 본 나선 — 가닥 1(회색) = layer · 가닥 2(코랄) = 질문 · 교차점 = 한 회전 · 점선 = 다음 회전</p>
+    <div class="orbit-wrap"><div class="orbit-slot"></div></div>
+    <p class="orbit-caption"><span class="g">가닥 1 = layer</span> · <span class="r">가닥 2 = 질문</span> · 가로대 = 한 회전 · 노드 클릭 = 해당 layer로</p>
     <div class="timeline" style="--gutter-w:${gutterW}px">
       <div class="strand-gutter"></div>
       <div class="layers-col">
@@ -136,10 +185,11 @@ async function renderTimeline(id) {
       </div>
     </div>`;
 
+  destroy3D = mountHelix3D(document.querySelector(".orbit-slot"), s, {
+    height: 280,
+    onLayerClick: focusLayer,
+  });
   drawStrands(s, lanes);
-  for (const node of document.querySelectorAll(".orbit-node")) {
-    node.addEventListener("click", () => focusLayer(node.dataset.layer));
-  }
   const target = new URLSearchParams(location.hash.split("?")[1]).get("layer");
   if (target) focusLayer(target);
 }
@@ -152,101 +202,6 @@ function focusLayer(index) {
   }
   card.classList.add("highlight");
   card.scrollIntoView({ behavior: "smooth", block: "center" });
-}
-
-/**
- * 시그니처: 옆에서 관측한 이중나선 궤도.
- * 시간축(가로)을 따라 두 가닥(layer/질문)이 꼬이고, 교차점이 layer.
- * depth가 깊어질수록 궤도 반경이 커진다 — 나선이 자란다.
- */
-function orbitSVG(s, openCount) {
-  const n = s.layers.length;
-  const period = 118;
-  const pad = 40;
-  const ghost = 0.75;
-  const W = pad * 2 + period * (n + ghost);
-  const H = 168;
-  const cy = H / 2;
-
-  const depths = s.layers.map((l, i) => l.depth ?? i + 1);
-  const maxD = Math.max(...depths, 1);
-  const ampAt = (t) => {
-    const i = Math.min(Math.max(Math.floor(t), 0), n - 1);
-    const d0 = depths[i] ?? 1;
-    const d1 = depths[i + 1] ?? d0 + (t > n - 1 ? 0.4 : 0);
-    const frac = Math.min(Math.max(t - i, 0), 1);
-    const d = d0 + (d1 - d0) * frac;
-    return 18 + 40 * (d / Math.max(maxD + 0.4, 1.4));
-  };
-  const path = (sign, from, to) => {
-    const steps = Math.max(Math.ceil((to - from) * 26), 2);
-    let d = "";
-    for (let i = 0; i <= steps; i++) {
-      const t = from + ((to - from) * i) / steps;
-      const x = pad + t * period;
-      const y = cy + sign * ampAt(t) * Math.sin(2 * Math.PI * t);
-      d += `${i ? " L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
-    }
-    return d;
-  };
-
-  let nodes = "";
-  for (let k = 1; k <= n; k++) {
-    const x = pad + k * period;
-    const layer = s.layers[k - 1];
-    nodes += `
-      <g class="orbit-node" data-layer="${k}">
-        <circle cx="${x}" cy="${cy}" r="13" fill="#faf8f4" opacity="0"/>
-        <circle cx="${x}" cy="${cy}" r="6" fill="#faf8f4" stroke="#1f1d1a" stroke-width="2"/>
-        <text x="${x}" y="${cy + 26}" text-anchor="middle" font-size="11.5"
-          font-family="IBM Plex Mono, monospace" fill="#1f1d1a">L${k}</text>
-        <text x="${x}" y="${cy + 41}" text-anchor="middle" font-size="10.5"
-          font-family="IBM Plex Mono, monospace" fill="#8a857c">${esc(layer.date.slice(5))}</text>
-      </g>`;
-  }
-
-  // 해소 마커: 해당 회전의 질문 가닥 위 (교차점 직전)
-  let solvedDots = "";
-  for (const q of s.questions) {
-    if (q.status !== "resolved" || q.resolvedAtLayer == null) continue;
-    const t = q.resolvedAtLayer - 0.25;
-    const x = pad + t * period;
-    const y = cy - ampAt(t) * Math.sin(2 * Math.PI * t);
-    solvedDots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4"
-      fill="#3e7c6f"><title>${esc(q.id)} 해소 (layer ${q.resolvedAtLayer})</title></circle>`;
-  }
-
-  // 열린 질문: 마지막 교차점 너머 점선 가닥 위의 위성들
-  let openDots = "";
-  const shown = Math.min(openCount, 5);
-  for (let k = 0; k < shown; k++) {
-    const t = n + 0.16 + (k * 0.42) / Math.max(shown, 1);
-    const x = pad + t * period;
-    const y = cy - ampAt(Math.min(t, n)) * Math.sin(2 * Math.PI * t);
-    openDots += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5" fill="#cc785c"/>`;
-  }
-  if (openCount > shown) {
-    openDots += `<text x="${(pad + (n + ghost) * period - 2).toFixed(1)}" y="${cy - 14}"
-      text-anchor="end" font-size="11" font-family="IBM Plex Mono, monospace"
-      fill="#cc785c">+${openCount - shown}</text>`;
-  }
-
-  const axisEnd = W - 8;
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
-    aria-label="시간축을 따라 진행하는 이중나선 궤도. 회전 ${n}회, 열린 질문 ${openCount}개.">
-    <line x1="${pad - 26}" y1="${cy}" x2="${axisEnd}" y2="${cy}" stroke="#e5e0d6" stroke-width="1.5"/>
-    <path d="M${axisEnd - 7} ${cy - 4} L${axisEnd} ${cy} L${axisEnd - 7} ${cy + 4}" fill="none" stroke="#c9c2b4" stroke-width="1.5"/>
-    <text x="${axisEnd}" y="${cy - 10}" text-anchor="end" font-size="11"
-      font-family="IBM Plex Mono, monospace" fill="#8a857c">시간 →</text>
-    <path d="${path(1, 0, n)}" fill="none" stroke="#b9b2a4" stroke-width="2.5"/>
-    <path d="${path(-1, 0, n)}" fill="none" stroke="#cc785c" stroke-width="2.5"/>
-    <path d="${path(1, n, n + ghost)}" fill="none" stroke="#b9b2a4" stroke-width="2" stroke-dasharray="3 5" opacity="0.8"/>
-    <path d="${path(-1, n, n + ghost)}" fill="none" stroke="#cc785c" stroke-width="2" stroke-dasharray="3 5" opacity="0.8"/>
-    <circle cx="${pad}" cy="${cy}" r="3.5" fill="#b9b2a4"/>
-    ${solvedDots}
-    ${openDots}
-    ${nodes}
-  </svg>`;
 }
 
 function layerCard(l, qById) {
@@ -296,7 +251,6 @@ function layerCard(l, qById) {
   </article>`;
 }
 
-/** 질문 가닥(카드 옆 상세): raised layer → resolved 카드 / 화면 끝까지 */
 function drawStrands(s, lanes) {
   const gutter = document.querySelector(".strand-gutter");
   const timeline = document.querySelector(".timeline");
@@ -344,7 +298,9 @@ function drawStrands(s, lanes) {
     const end = el("div", `strand-dot ${resolved ? "resolve" : "still-open"}`);
     end.style.left = `${x}px`;
     end.style.top = `${to - 5}px`;
-    end.title = resolved ? `${q.id} 해소 (layer ${q.resolvedAtLayer})` : `${q.id} 미해결`;
+    end.title = resolved
+      ? `${q.id} 해소 (layer ${q.resolvedAtLayer})`
+      : `${q.id} 미해결`;
     gutter.appendChild(end);
   }
 }
@@ -376,7 +332,7 @@ async function renderQuestions() {
   if (questions.length === 0) {
     app.innerHTML = `
       <h1 class="page-title">열린 질문</h1>
-      <div class="empty">열린 질문이 없습니다. 나선이 전부 멈춰 있어요 — 다음 세션을 시작해 보세요.</div>`;
+      <div class="empty">열린 질문이 없습니다. 모든 나선이 잠들어 있어요 — 다음 세션을 시작해 보세요.</div>`;
     return;
   }
   const groups = new Map();
@@ -429,14 +385,12 @@ function esc(raw) {
   );
 }
 
-/** 노트 본문의 인라인 마크다운(**볼드**, `코드`)만 최소 렌더 */
 function mdInline(raw) {
   return esc(raw)
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/`([^`]+)`/g, "<code>$1</code>");
 }
 
-/** 마크다운 토큰 제거한 평문 (툴팁·요약용) */
 function plain(raw) {
   return String(raw)
     .replace(/\*\*([^*]+)\*\*/g, "$1")
