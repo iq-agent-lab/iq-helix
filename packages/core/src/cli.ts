@@ -30,8 +30,9 @@ async function main(): Promise<number> {
       `import 완료 → ${store.root}\n` +
         `  subjects: ${r.subjects}, layers: ${r.layers}, 시드된 질문: ${r.seededQuestions}\n` +
         `  edges 변환: ${r.resolvedEdges}, unresolved links: ${r.unresolvedLinks}` +
-        (r.skippedFiles.length
-          ? `\n  건너뜀(${r.skippedFiles.length}): ${r.skippedFiles.join(", ")}`
+        (r.skipped.length
+          ? `\n  건너뜀(${r.skipped.length}):\n` +
+            r.skipped.map((s) => `    - ${s.file} → ${s.reason}`).join("\n")
           : ""),
     );
     return 0;

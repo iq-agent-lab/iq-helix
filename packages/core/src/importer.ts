@@ -13,7 +13,7 @@ export interface ImportResult {
   seededQuestions: number;
   resolvedEdges: number;
   unresolvedLinks: number;
-  skippedFiles: string[];
+  skipped: { file: string; reason: string }[];
 }
 
 interface OldNote {
@@ -50,15 +50,15 @@ export async function importSpiralBuddy(
     seededQuestions: 0,
     resolvedEdges: 0,
     unresolvedLinks: 0,
-    skippedFiles: [],
+    skipped: [],
   };
 
   const files = (await readdir(notesDir)).filter((f) => f.endsWith(".md"));
   const notes: OldNote[] = [];
   for (const f of files) {
-    const note = parseOldNote(f, await readFile(join(notesDir, f), "utf8"));
-    if (note) notes.push(note);
-    else result.skippedFiles.push(f);
+    const parsed = parseOldNote(f, await readFile(join(notesDir, f), "utf8"));
+    if ("note" in parsed) notes.push(parsed.note);
+    else result.skipped.push({ file: f, reason: parsed.reason });
   }
 
   const groups = new Map<string, OldNote[]>();
@@ -77,7 +77,9 @@ export async function importSpiralBuddy(
       (a, b) => a.depth - b.depth || a.date.localeCompare(b.date),
     );
     const first = group[0];
-    let id = slugifyChapter(first.chapterId);
+    let id = first.chapterId.startsWith("topic:")
+      ? slugify(first.topic)
+      : slugifyChapter(first.chapterId);
     if (usedIds.has(id)) {
       id = `${slugify(first.roadmapName ?? "roadmap")}-${id}`;
     }
@@ -162,16 +164,37 @@ export async function importSpiralBuddy(
   return result;
 }
 
-function parseOldNote(file: string, md: string): OldNote | null {
+function parseOldNote(
+  file: string,
+  md: string,
+): { note: OldNote } | { reason: string } {
+  if (file.startsWith("_")) return { reason: "인덱스/내부 파일" };
   const fmMatch = md.match(/^---\n([\s\S]*?)\n---\n?/);
-  if (!fmMatch) return null;
+  if (!fmMatch) return { reason: "frontmatter 없음" };
   let fm: any;
   try {
     fm = YAML.parse(fmMatch[1]);
   } catch {
-    return null;
+    return { reason: "frontmatter YAML 파싱 실패" };
   }
-  if (!fm?.chapter_id || fm.generator !== "iq-spiral-buddy") return null;
+  if (!fm || typeof fm !== "object") return { reason: "frontmatter가 비어 있음" };
+
+  const topic: string | undefined = fm.topic ?? fm.title;
+  if (!topic) return { reason: "topic/title 없음" };
+
+  // generator는 비강제: 네이밍 개선 이후 노트 등 스키마 변형 수용.
+  // 단, spiral 노트의 최소 신호(chapter_id 또는 depth)는 있어야 한다.
+  const hasChapter = fm.chapter_id != null;
+  const depthFromName = file.match(/[\s-]d(\d+)\.md$/)?.[1];
+  if (!hasChapter && fm.depth == null && depthFromName == null) {
+    return { reason: "spiral 노트 신호 없음 (chapter_id/depth 모두 없음)" };
+  }
+
+  const date: string | null =
+    fm.date != null
+      ? String(fm.date).slice(0, 10)
+      : (file.match(/(\d{4}-\d{2}-\d{2})/)?.[1] ?? null);
+  if (!date) return { reason: "date 없음 (frontmatter/파일명 모두)" };
 
   const body = md.slice(fmMatch[0].length);
   const sections = body
@@ -192,16 +215,19 @@ function parseOldNote(file: string, md: string): OldNote | null {
   }
 
   return {
-    file,
-    topic: fm.topic ?? fm.title ?? file,
-    date: String(fm.date).slice(0, 10),
-    depth: Number(fm.depth ?? 1),
-    chapterId: String(fm.chapter_id),
-    roadmapName: fm.roadmap ?? null,
-    roadmapId: fm.roadmap_id ?? null,
-    tags: Array.isArray(fm.tags) ? fm.tags.map(String) : [],
-    related,
-    sections,
+    note: {
+      file,
+      topic,
+      date,
+      depth: Number(fm.depth ?? depthFromName ?? 1),
+      // chapter_id 없는 변형 스키마: 파일명을 chapter로, 그룹핑은 topic 기반으로
+      chapterId: hasChapter ? String(fm.chapter_id) : `topic:${topic}`,
+      roadmapName: fm.roadmap ?? null,
+      roadmapId: fm.roadmap_id ?? null,
+      tags: Array.isArray(fm.tags) ? fm.tags.map(String) : [],
+      related,
+      sections,
+    },
   };
 }
 

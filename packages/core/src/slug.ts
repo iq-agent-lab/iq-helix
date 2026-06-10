@@ -10,6 +10,8 @@ export function slugify(raw: string): string {
     .trim()
     .replace(/[^a-z0-9가-힣]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .replace(/-{2,}/g, "-");
+    .replace(/-{2,}/g, "-")
+    .slice(0, 64)
+    .replace(/-+$/, "");
   return s || "untitled";
 }

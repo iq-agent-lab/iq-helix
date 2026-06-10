@@ -89,6 +89,7 @@ describe("importSpiralBuddy", () => {
     expect(result.seededQuestions).toBe(2);
     expect(result.resolvedEdges).toBe(1);
     expect(result.unresolvedLinks).toBe(1);
+    expect(result.skipped).toEqual([]);
 
     const bf = (await store.getSubject("beanfactory"))!;
     expect(bf.layers.map((l) => l.index)).toEqual([1, 2]);
